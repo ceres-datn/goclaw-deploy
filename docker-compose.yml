@@ -1,0 +1,28 @@
+# GoClaw All-in-One — Standalone mode
+#
+# Usage:
+#   docker compose up -d
+#
+# Dashboard: http://localhost:3000
+# API:       http://localhost:3000/v1/
+
+services:
+  goclaw:
+    image: itsddvn/goclaw:latest
+    ports:
+      - "${GOCLAW_UI_PORT:-3000}:80"
+    volumes:
+      - ./config.json:/app/config.json:ro
+      - goclaw-workspace:/app/workspace
+      - goclaw-data:/app/data
+      - goclaw-sessions:/app/sessions
+      - goclaw-skills:/app/skills
+    env_file:
+      - .env
+    restart: unless-stopped
+
+volumes:
+  goclaw-workspace:
+  goclaw-data:
+  goclaw-sessions:
+  goclaw-skills:
