@@ -14,21 +14,27 @@ case "${1:-serve}" in
         # Managed mode: auto-upgrade before starting
         if [ "$GOCLAW_MODE" = "managed" ] && [ -n "$GOCLAW_POSTGRES_DSN" ]; then
             echo "Managed mode: running upgrade..."
-            /app/goclaw upgrade || echo "Upgrade warning (may already be up-to-date)"
+            if ! /app/goclaw upgrade; then
+                echo "ERROR: upgrade failed, check DB connection and schema" >&2
+                exit 1
+            fi
         fi
 
         # Start goclaw in background
         /app/goclaw &
         GOCLAW_PID=$!
 
-        # Start nginx in foreground (as background job for wait)
+        # Start nginx in background
         nginx -g 'daemon off;' &
         NGINX_PID=$!
 
         trap shutdown SIGTERM SIGINT
 
-        # Wait for either process to exit
-        wait
+        # Exit when either process dies
+        while kill -0 "$GOCLAW_PID" 2>/dev/null && kill -0 "$NGINX_PID" 2>/dev/null; do
+            sleep 1
+        done
+        shutdown
         ;;
     *)
         # Pass through any other command to goclaw

@@ -41,6 +41,9 @@ FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates wget nginx
 
+# Non-root user
+RUN addgroup -S goclaw && adduser -S -G goclaw goclaw
+
 WORKDIR /app
 
 # Copy Go binary and migrations
@@ -55,9 +58,11 @@ COPY --from=deploy nginx.conf /etc/nginx/http.d/default.conf
 COPY --from=deploy entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh
 
-# Create data directories
+# Create data directories and set permissions
 RUN mkdir -p /app/workspace /app/data /app/sessions /app/skills /app/.goclaw \
-    && mkdir -p /run/nginx
+    && mkdir -p /run/nginx /var/lib/nginx/logs /var/log/nginx \
+    && chown -R goclaw:goclaw /app /run/nginx /usr/share/nginx/html \
+        /var/lib/nginx /var/log/nginx
 
 # Default environment
 ENV GOCLAW_CONFIG=/app/config.json \
@@ -69,10 +74,12 @@ ENV GOCLAW_CONFIG=/app/config.json \
     GOCLAW_HOST=0.0.0.0 \
     GOCLAW_PORT=18790
 
-EXPOSE 80
+USER goclaw
+
+EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget -qO- http://localhost:80/ || exit 1
+    CMD wget -qO- http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 CMD ["serve"]

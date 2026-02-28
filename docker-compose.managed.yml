@@ -7,7 +7,7 @@ services:
   goclaw:
     environment:
       GOCLAW_MODE: managed
-      GOCLAW_POSTGRES_DSN: postgres://goclaw:goclaw@postgres:5432/goclaw?sslmode=disable
+      GOCLAW_POSTGRES_DSN: postgres://goclaw:${POSTGRES_PASSWORD:-goclaw}@postgres:5432/goclaw?sslmode=disable
     depends_on:
       postgres:
         condition: service_healthy
@@ -16,7 +16,7 @@ services:
     image: pgvector/pgvector:pg18
     environment:
       POSTGRES_USER: goclaw
-      POSTGRES_PASSWORD: goclaw
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-goclaw}
       POSTGRES_DB: goclaw
     volumes:
       - pgdata:/var/lib/postgresql/data
