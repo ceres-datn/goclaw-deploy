@@ -11,15 +11,15 @@ HEALTH_INTERVAL=5
 COMPOSE_BUILD="docker-compose-build.yml"
 COMPOSE_PROD="docker-compose.yml"
 COMPOSE_DOKPLOY="docker-compose-dokploy.yml"
-TOTAL_STEPS=10
 LOCKFILE="/tmp/goclaw-release.lock"
+COMMAND="${1:-full}"
 
 # ── Colors ──────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 info()    { echo -e "${CYAN}ℹ ${NC}$*"; }
@@ -27,11 +27,10 @@ warn()    { echo -e "${YELLOW}⚠ ${NC}$*"; }
 error()   { echo -e "${RED}✗ ${NC}$*" >&2; }
 success() { echo -e "${GREEN}✓ ${NC}$*"; }
 
-step() {
-  local n=$1; shift
+header() {
   echo ""
   echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-  echo -e "${GREEN}  [${n}/${TOTAL_STEPS}] $*${NC}"
+  echo -e "${GREEN}  $*${NC}"
   echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 }
 
@@ -64,7 +63,6 @@ health_check() {
   return 1
 }
 
-# macOS-compatible sed -i
 sed_i() {
   if [[ "$OSTYPE" == darwin* ]]; then
     sed -i '' "$@"
@@ -73,12 +71,11 @@ sed_i() {
   fi
 }
 
-# Escape special regex chars for sed
 escape_sed() {
   printf '%s\n' "$1" | sed 's/[[\.*^$()+?{|]/\\&/g'
 }
 
-# ── Lock file ───────────────────────────────────────────────────────────────
+# ── Lock & cleanup ─────────────────────────────────────────────────────────
 acquire_lock() {
   if [[ -f "$LOCKFILE" ]]; then
     local pid
@@ -95,11 +92,6 @@ acquire_lock() {
   echo $$ > "$LOCKFILE"
 }
 
-release_lock() {
-  rm -f "$LOCKFILE"
-}
-
-# ── Cleanup trap ────────────────────────────────────────────────────────────
 COMPOSE_RUNNING=""
 
 cleanup() {
@@ -107,7 +99,7 @@ cleanup() {
     warn "Cleaning up Docker resources..."
     docker compose -f "$DEPLOY_DIR/$COMPOSE_RUNNING" down -v --remove-orphans 2>/dev/null || true
   fi
-  release_lock
+  rm -f "$LOCKFILE"
 }
 trap cleanup EXIT
 
@@ -135,190 +127,244 @@ if ! docker buildx version &> /dev/null; then
   exit 1
 fi
 
-# ── Step 1: SYNC ────────────────────────────────────────────────────────────
-step 1 "SYNC — Fetch & merge upstream"
-
-info "Fetching upstream..."
-git -C "$CORE_DIR" fetch upstream
-
-CURRENT_BRANCH=$(git -C "$CORE_DIR" branch --show-current)
-info "Merging upstream/main into $CURRENT_BRANCH..."
-
-if ! git -C "$CORE_DIR" merge upstream/main --no-edit; then
-  error "Merge conflict detected in $CORE_DIR"
-  error ""
-  error "Resolution steps:"
-  error "  1. cd $CORE_DIR"
-  error "  2. Resolve conflicts (git status, edit files)"
-  error "  3. git add <resolved-files>"
-  error "  4. git merge --continue"
-  error "  5. Re-run: ./release.sh"
-  exit 1
-fi
-
-success "Upstream synced"
-
-# ── Step 2: DIFF ────────────────────────────────────────────────────────────
-step 2 "DIFF — Check Docker-related changes"
-
-info "Changes in goclaw-core since last commit (Docker-related):"
-git -C "$CORE_DIR" diff HEAD~1 -- \
-  Dockerfile docker-compose* entrypoint.sh nginx.conf \
-  2>/dev/null || warn "No previous commit to diff against"
-
-echo ""
-info "Changes in goclaw-deploy:"
-git -C "$DEPLOY_DIR" diff HEAD -- \
-  Dockerfile entrypoint.sh nginx.conf docker-compose* \
-  2>/dev/null || warn "No changes in deploy"
-
-# ── Step 3: UPDATE (manual pause) ───────────────────────────────────────────
-step 3 "UPDATE — Review & update deploy config"
-
-warn "Review the changes above."
-warn "If deploy configs (Dockerfile, entrypoint.sh, nginx.conf) need updating, do it now."
-read -r -p "$(echo -e "${YELLOW}? ${NC}Press Enter to continue or Ctrl+C to abort... ")"
-
-# ── Step 4: CLEAN ───────────────────────────────────────────────────────────
-step 4 "CLEAN — Remove old containers & volumes"
-
-info "Stopping and removing project containers..."
-docker compose -f "$DEPLOY_DIR/$COMPOSE_BUILD" down -v --remove-orphans 2>/dev/null || true
-docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" down -v --remove-orphans 2>/dev/null || true
-
-success "Cleaned"
-
-# ── Step 5: TEST BUILD ──────────────────────────────────────────────────────
-step 5 "TEST — Build from source & health check"
-
-COMPOSE_RUNNING="$COMPOSE_BUILD"
-info "Building and starting with $COMPOSE_BUILD..."
-docker compose -f "$DEPLOY_DIR/$COMPOSE_BUILD" up -d --build
-
-# compose-build.yml maps 3000:8080, use longer timeout for cold builds
-health_check "http://localhost:3000/health" 60 5
-
-success "Build test passed"
-
-# Stop test containers
-docker compose -f "$DEPLOY_DIR/$COMPOSE_BUILD" down -v --remove-orphans
-COMPOSE_RUNNING=""
-
-# ── Step 6: TAG ─────────────────────────────────────────────────────────────
-step 6 "TAG — Get version from goclaw-core"
-
-VERSION=$(git -C "$CORE_DIR" describe --tags 2>/dev/null) || {
-  error "Failed to get version from git tags."
-  error "Ensure tags are fetched: git -C $CORE_DIR fetch upstream --tags"
-  exit 1
+# ── Usage ───────────────────────────────────────────────────────────────────
+usage() {
+  echo "Usage: ./release.sh [sync|publish|full]"
+  echo ""
+  echo "Commands:"
+  echo "  sync      Sync upstream, check changes, build & test locally"
+  echo "  publish   Tag, build image, push to Docker Hub, smoke test, commit"
+  echo "  full      Run everything (default)"
+  echo ""
 }
 
-if [[ -z "$VERSION" ]]; then
-  error "Empty version string. No tags in repo?"
-  exit 1
-fi
+# ═══════════════════════════════════════════════════════════════════════════
+# SYNC: fetch upstream → diff → pause → clean → test build
+# ═══════════════════════════════════════════════════════════════════════════
+do_sync() {
+  header "SYNC — Fetch & merge upstream"
 
-if [[ "$VERSION" == *"dirty"* ]]; then
-  error "Working tree is dirty: '$VERSION'"
-  error "Commit or stash changes in $CORE_DIR first."
-  exit 1
-fi
+  info "Fetching upstream..."
+  git -C "$CORE_DIR" fetch upstream
 
-info "Detected version: ${CYAN}${VERSION}${NC}"
+  CURRENT_BRANCH=$(git -C "$CORE_DIR" branch --show-current)
+  info "Merging upstream/main into $CURRENT_BRANCH..."
 
-# ── Step 7: BUILD + PUSH ────────────────────────────────────────────────────
-step 7 "BUILD — Build & push to Docker Hub"
-
-confirm "Push ${IMAGE}:${VERSION} to Docker Hub?"
-
-info "Building image..."
-if ! docker buildx build \
-  --platform linux/amd64 \
-  --build-context deploy="$DEPLOY_DIR" \
-  -f "$DEPLOY_DIR/Dockerfile" \
-  --build-arg VERSION="$VERSION" \
-  -t "$IMAGE:$VERSION" \
-  -t "$IMAGE:latest" \
-  --push \
-  "$CORE_DIR"; then
-  error "Docker build or push failed"
-  error "Check credentials: docker login"
-  exit 1
-fi
-
-# Verify image is pullable
-info "Verifying pushed image..."
-if ! docker pull "$IMAGE:$VERSION" > /dev/null 2>&1; then
-  error "Cannot pull $IMAGE:$VERSION — push may have partially failed"
-  exit 1
-fi
-
-success "Pushed and verified ${IMAGE}:${VERSION}"
-
-# ── Step 8: UPDATE TAGS ─────────────────────────────────────────────────────
-step 8 "UPDATE — Write new tag into compose files"
-
-IMAGE_ESCAPED=$(escape_sed "$IMAGE")
-VERSION_ESCAPED=$(escape_sed "$VERSION")
-
-for f in "$COMPOSE_PROD" "$COMPOSE_DOKPLOY"; do
-  filepath="$DEPLOY_DIR/$f"
-  if [[ -f "$filepath" ]]; then
-    sed_i "s|image: ${IMAGE_ESCAPED}:.*|image: ${IMAGE}:${VERSION}|" "$filepath"
-    success "Updated $f → ${VERSION}"
-  else
-    warn "$f not found, skipping"
-  fi
-done
-
-# ── Step 9: SMOKE TEST ──────────────────────────────────────────────────────
-step 9 "SMOKE — Pull image & verify"
-
-COMPOSE_RUNNING="$COMPOSE_PROD"
-info "Starting with pulled image ($COMPOSE_PROD)..."
-docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" up -d
-
-# compose.yml has no port mapping — check container health status directly
-info "Waiting for goclaw container to be healthy..."
-for i in $(seq 1 "$HEALTH_RETRIES"); do
-  STATUS=$(docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" ps goclaw --format '{{.Health}}' 2>/dev/null || echo "")
-  if [[ "$STATUS" == "healthy" ]]; then
-    success "Smoke test passed (attempt $i/$HEALTH_RETRIES)"
-    break
-  fi
-  if [[ $i -eq $HEALTH_RETRIES ]]; then
-    error "Smoke test failed — goclaw container not healthy"
-    docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" logs goclaw --tail=20
+  if ! git -C "$CORE_DIR" merge upstream/main --no-edit; then
+    error "Merge conflict detected in $CORE_DIR"
+    error ""
+    error "Resolution steps:"
+    error "  1. cd $CORE_DIR"
+    error "  2. Resolve conflicts (git status, edit files)"
+    error "  3. git add <resolved-files>"
+    error "  4. git merge --continue"
+    error "  5. Re-run: ./release.sh sync"
     exit 1
   fi
-  echo -n "."
-  sleep "$HEALTH_INTERVAL"
-done
 
-docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" down -v --remove-orphans
-COMPOSE_RUNNING=""
+  success "Upstream synced"
 
-success "Smoke test passed"
+  # ── AUTO-REVIEW ──────────────────────────────────────────────────────
+  header "REVIEW — Auto-sync deploy configs from upstream"
 
-# ── Step 10: COMMIT ─────────────────────────────────────────────────────────
-step 10 "COMMIT — Stage & commit changes"
+  DEPLOY_CONFIGS="Dockerfile nginx.conf"
+  SYNCED=0
 
-info "Files to commit:"
-git -C "$DEPLOY_DIR" diff --name-only
-git -C "$DEPLOY_DIR" diff --staged --name-only
+  for cfg in $DEPLOY_CONFIGS; do
+    core_file="$CORE_DIR/$cfg"
+    deploy_file="$DEPLOY_DIR/$cfg"
 
-confirm "Commit release ${VERSION}?"
+    if [[ ! -f "$core_file" ]]; then
+      continue
+    fi
 
-cd "$DEPLOY_DIR"
-git add "$COMPOSE_PROD" "$COMPOSE_DOKPLOY"
-git commit -m "release: update image to ${VERSION}"
+    if [[ ! -f "$deploy_file" ]]; then
+      warn "$cfg exists in core but not in deploy, skipping"
+      continue
+    fi
 
-success "Committed release ${VERSION}"
+    if ! diff -q "$core_file" "$deploy_file" > /dev/null 2>&1; then
+      info "Diff detected in $cfg (core vs deploy):"
+      diff --color=auto -u "$deploy_file" "$core_file" || true
+      echo ""
+      warn "$cfg differs — deploy version kept (review diff above if needed)"
+      SYNCED=$((SYNCED + 1))
+    fi
+  done
 
-# ── Done ────────────────────────────────────────────────────────────────────
-echo ""
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo -e "${GREEN}  Release ${VERSION} complete!${NC}"
-echo -e "${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-echo ""
-info "Next: git push to deploy"
+  if [[ $SYNCED -eq 0 ]]; then
+    success "Deploy configs are in sync with upstream"
+  else
+    info "$SYNCED config(s) differ between core and deploy (shown above)"
+  fi
+
+  # ── CLEAN ─────────────────────────────────────────────────────────────
+  header "CLEAN — Remove old containers & volumes"
+
+  info "Stopping and removing project containers..."
+  docker compose -f "$DEPLOY_DIR/$COMPOSE_BUILD" down -v --remove-orphans 2>/dev/null || true
+  docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" down -v --remove-orphans 2>/dev/null || true
+
+  success "Cleaned"
+
+  # ── TEST BUILD ────────────────────────────────────────────────────────
+  header "TEST — Build from source & health check"
+
+  COMPOSE_RUNNING="$COMPOSE_BUILD"
+  info "Building and starting with $COMPOSE_BUILD..."
+  docker compose -f "$DEPLOY_DIR/$COMPOSE_BUILD" up -d --build
+
+  health_check "http://localhost:3000/health" 60 5
+
+  success "Build test passed"
+
+  # Keep containers running for manual inspection
+  COMPOSE_RUNNING=""
+
+  echo ""
+  success "Sync complete! Containers are still running for inspection."
+  info "Dashboard: http://localhost:3000"
+  info "Stop with: docker compose -f $COMPOSE_BUILD down -v"
+  info "Next: ./release.sh publish"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PUBLISH: tag → build+push → update tags → smoke test → commit
+# ═══════════════════════════════════════════════════════════════════════════
+do_publish() {
+  # ── TAG ───────────────────────────────────────────────────────────────
+  header "TAG — Get version from goclaw-core"
+
+  VERSION=$(git -C "$CORE_DIR" describe --tags 2>/dev/null) || {
+    error "Failed to get version from git tags."
+    error "Ensure tags are fetched: git -C $CORE_DIR fetch upstream --tags"
+    exit 1
+  }
+
+  if [[ -z "$VERSION" ]]; then
+    error "Empty version string. No tags in repo?"
+    exit 1
+  fi
+
+  if [[ "$VERSION" == *"dirty"* ]]; then
+    error "Working tree is dirty: '$VERSION'"
+    error "Commit or stash changes in $CORE_DIR first."
+    exit 1
+  fi
+
+  info "Detected version: ${CYAN}${VERSION}${NC}"
+
+  # ── BUILD + PUSH ──────────────────────────────────────────────────────
+  header "BUILD — Build & push to Docker Hub"
+
+  confirm "Push ${IMAGE}:${VERSION} to Docker Hub?"
+
+  info "Building image..."
+  if ! docker buildx build \
+    --platform linux/amd64 \
+    --build-context deploy="$DEPLOY_DIR" \
+    -f "$DEPLOY_DIR/Dockerfile" \
+    --build-arg VERSION="$VERSION" \
+    -t "$IMAGE:$VERSION" \
+    -t "$IMAGE:latest" \
+    --push \
+    "$CORE_DIR"; then
+    error "Docker build or push failed"
+    error "Check credentials: docker login"
+    exit 1
+  fi
+
+  info "Verifying pushed image..."
+  if ! docker pull "$IMAGE:$VERSION" > /dev/null 2>&1; then
+    error "Cannot pull $IMAGE:$VERSION — push may have partially failed"
+    exit 1
+  fi
+
+  success "Pushed and verified ${IMAGE}:${VERSION}"
+
+  # ── UPDATE TAGS ───────────────────────────────────────────────────────
+  header "UPDATE — Write new tag into compose files"
+
+  IMAGE_ESCAPED=$(escape_sed "$IMAGE")
+
+  for f in "$COMPOSE_PROD" "$COMPOSE_DOKPLOY"; do
+    filepath="$DEPLOY_DIR/$f"
+    if [[ -f "$filepath" ]]; then
+      sed_i "s|image: ${IMAGE_ESCAPED}:.*|image: ${IMAGE}:${VERSION}|" "$filepath"
+      success "Updated $f → ${VERSION}"
+    else
+      warn "$f not found, skipping"
+    fi
+  done
+
+  # ── SMOKE TEST ────────────────────────────────────────────────────────
+  header "SMOKE — Pull image & verify"
+
+  COMPOSE_RUNNING="$COMPOSE_PROD"
+  info "Starting with pulled image ($COMPOSE_PROD)..."
+  docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" up -d
+
+  info "Waiting for goclaw container to be healthy..."
+  for i in $(seq 1 "$HEALTH_RETRIES"); do
+    STATUS=$(docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" ps goclaw --format '{{.Health}}' 2>/dev/null || echo "")
+    if [[ "$STATUS" == "healthy" ]]; then
+      success "Smoke test passed (attempt $i/$HEALTH_RETRIES)"
+      break
+    fi
+    if [[ $i -eq $HEALTH_RETRIES ]]; then
+      error "Smoke test failed — goclaw container not healthy"
+      docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" logs goclaw --tail=20
+      exit 1
+    fi
+    echo -n "."
+    sleep "$HEALTH_INTERVAL"
+  done
+
+  docker compose -f "$DEPLOY_DIR/$COMPOSE_PROD" down -v --remove-orphans
+  COMPOSE_RUNNING=""
+
+  success "Smoke test passed"
+
+  # ── COMMIT ────────────────────────────────────────────────────────────
+  header "COMMIT — Stage & commit changes"
+
+  info "Files to commit:"
+  git -C "$DEPLOY_DIR" diff --name-only
+  git -C "$DEPLOY_DIR" diff --staged --name-only
+
+  confirm "Commit release ${VERSION}?"
+
+  cd "$DEPLOY_DIR"
+  git add "$COMPOSE_PROD" "$COMPOSE_DOKPLOY"
+  git commit -m "release: update image to ${VERSION}"
+
+  success "Committed release ${VERSION}"
+
+  echo ""
+  header "Release ${VERSION} complete!"
+  info "Next: git push to deploy"
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN — Route subcommand
+# ═══════════════════════════════════════════════════════════════════════════
+case "$COMMAND" in
+  sync)
+    do_sync
+    ;;
+  publish)
+    do_publish
+    ;;
+  full)
+    do_sync
+    do_publish
+    ;;
+  -h|--help|help)
+    usage
+    ;;
+  *)
+    error "Unknown command: $COMMAND"
+    usage
+    exit 1
+    ;;
+esac

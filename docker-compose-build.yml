@@ -13,7 +13,7 @@ services:
   goclaw:
     platform: linux/amd64
     build:
-      context: ../goclaw
+      context: ../goclaw-core
       dockerfile: ${PWD}/Dockerfile
       additional_contexts:
         deploy: .
