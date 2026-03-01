@@ -144,14 +144,16 @@ usage() {
 do_sync() {
   header "SYNC — Fetch & merge upstream"
 
+  # ── Sync upstream/main → fork/main ──────────────────────────────────
+  info "Checking out main..."
+  git -C "$CORE_DIR" checkout main
+
   info "Fetching upstream..."
   git -C "$CORE_DIR" fetch upstream
 
-  CURRENT_BRANCH=$(git -C "$CORE_DIR" branch --show-current)
-  info "Merging upstream/main into $CURRENT_BRANCH..."
-
+  info "Merging upstream/main into main..."
   if ! git -C "$CORE_DIR" merge upstream/main --no-edit; then
-    error "Merge conflict detected in $CORE_DIR"
+    error "Merge conflict on main in $CORE_DIR"
     error ""
     error "Resolution steps:"
     error "  1. cd $CORE_DIR"
@@ -162,7 +164,26 @@ do_sync() {
     exit 1
   fi
 
-  success "Upstream synced"
+  success "main synced with upstream"
+
+  # ── Merge fork/main → fork/develop ────────────────────────────────
+  info "Checking out develop..."
+  git -C "$CORE_DIR" checkout develop
+
+  info "Merging main into develop..."
+  if ! git -C "$CORE_DIR" merge main --no-edit; then
+    error "Merge conflict on develop in $CORE_DIR"
+    error ""
+    error "Resolution steps:"
+    error "  1. cd $CORE_DIR"
+    error "  2. Resolve conflicts (git status, edit files)"
+    error "  3. git add <resolved-files>"
+    error "  4. git merge --continue"
+    error "  5. Re-run: ./release.sh sync"
+    exit 1
+  fi
+
+  success "develop synced with main"
 
   # ── AUTO-REVIEW ──────────────────────────────────────────────────────
   header "REVIEW — Auto-sync deploy configs from upstream"
