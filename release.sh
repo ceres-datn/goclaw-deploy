@@ -257,6 +257,23 @@ do_sync() {
   # Keep containers running for manual inspection
   COMPOSE_RUNNING=""
 
+  # ── PUSH SYNCED CODE ───────────────────────────────────────────────
+  header "PUSH — Push synced branches to fork"
+
+  info "Pushing main to origin..."
+  if ! git -C "$CORE_DIR" push origin main; then
+    warn "Failed to push main — you may need to push manually"
+  else
+    success "main pushed"
+  fi
+
+  info "Pushing develop to origin..."
+  if ! git -C "$CORE_DIR" push origin develop; then
+    warn "Failed to push develop — you may need to push manually"
+  else
+    success "develop pushed"
+  fi
+
   echo ""
   success "Sync complete! Containers are still running for inspection."
   info "Dashboard: http://localhost:3000"
