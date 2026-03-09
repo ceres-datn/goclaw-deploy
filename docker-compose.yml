@@ -31,6 +31,7 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+    read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
     deploy:
