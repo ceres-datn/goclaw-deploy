@@ -40,7 +40,8 @@ RUN pnpm build
 # ── Stage 3: Runtime (Alpine + nginx) ──
 FROM alpine:3.22
 
-RUN apk add --no-cache ca-certificates wget nginx
+RUN apk add --no-cache ca-certificates wget nginx \
+    python3 py3-pip doas
 
 # Non-root user
 RUN addgroup -S goclaw && adduser -S -G goclaw goclaw
@@ -74,7 +75,6 @@ ENV GOCLAW_CONFIG=/app/config.json \
     GOCLAW_MIGRATIONS_DIR=/app/migrations \
     GOCLAW_HOST=0.0.0.0 \
     GOCLAW_PORT=18790
-
 USER goclaw
 
 EXPOSE 8080 18790
