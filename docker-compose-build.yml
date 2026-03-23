@@ -1,4 +1,4 @@
-# GoClaw All-in-One — Local build mode (build from source)
+# GoClaw All-in-One — Local build mode (build from source + pgAdmin)
 #
 # Prerequisites:
 #   Clone goclaw source to ../goclaw (sibling directory)
@@ -8,6 +8,7 @@
 #
 # Dashboard: http://localhost:3000
 # API:       http://localhost:3000/v1/
+# pgAdmin:   http://localhost:5050
 
 services:
   goclaw:
@@ -69,6 +70,22 @@ services:
       retries: 10
     restart: unless-stopped
 
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    ports:
+      - "${PGADMIN_PORT:-5050}:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL:-admin@admin.com}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:-admin}
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: 'False'
+    volumes:
+      - pgadmin-data:/var/lib/pgadmin
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
 volumes:
   goclaw-data:
   goclaw-workspace:
@@ -76,3 +93,4 @@ volumes:
   goclaw-sessions:
   goclaw-dotdir:
   pgdata:
+  pgadmin-data:
