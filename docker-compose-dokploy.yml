@@ -9,19 +9,20 @@
 
 services:
   goclaw:
-    image: ghcr.io/nextlevelbuilder/goclaw-web:v2.9.1
+    image: ghcr.io/nextlevelbuilder/goclaw:v2.9.1
     volumes:
       - goclaw-data:/app/data
       - goclaw-workspace:/app/workspace
-      - goclaw-skills:/app/skills
-      - goclaw-dotdir:/app/.goclaw
     env_file:
       - path: .env
         required: false
     environment:
+      GOCLAW_HOST: 0.0.0.0
+      GOCLAW_PORT: 18790
       GOCLAW_CONFIG: /app/data/config.json
       GOCLAW_MODE: managed
       GOCLAW_POSTGRES_DSN: postgres://${POSTGRES_USER:-goclaw}:${POSTGRES_PASSWORD:-goclaw}@postgres:5432/${POSTGRES_DB:-goclaw}?sslmode=disable
+      GOCLAW_SKILLS_DIR: /app/data/skills
     depends_on:
       postgres:
         condition: service_healthy
@@ -43,6 +44,14 @@ services:
           memory: 1G
           cpus: '2.0'
           pids: 200
+    restart: unless-stopped
+
+  goclaw-ui:
+    image: ghcr.io/nextlevelbuilder/goclaw-web:v2.9.1
+    depends_on:
+      - goclaw
+    networks:
+      - dokploy-network
     restart: unless-stopped
 
   postgres:
@@ -85,7 +94,5 @@ networks:
 volumes:
   goclaw-data:
   goclaw-workspace:
-  goclaw-skills:
-  goclaw-dotdir:
   pgdata:
   pgadmin-data:
