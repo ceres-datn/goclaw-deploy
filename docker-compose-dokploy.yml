@@ -11,11 +11,11 @@ services:
   goclaw:
     image: itsddvn/goclaw:v2.4.6
     volumes:
-      - goclaw-data:/app/data
-      - goclaw-workspace:/app/workspace
-      - goclaw-skills:/app/skills
-      - goclaw-sessions:/app/sessions
-      - goclaw-dotdir:/app/.goclaw
+      - ${GOCLAW_DATA_VOLUME:-goclaw-data}:/app/data
+      - ${GOCLAW_WORKSPACE_VOLUME:-goclaw-workspace}:/app/workspace
+      - ${GOCLAW_SKILLS_VOLUME:-goclaw-skills}:/app/skills
+      - ${GOCLAW_SESSIONS_VOLUME:-goclaw-sessions}:/app/sessions
+      - ${GOCLAW_DOTDIR_VOLUME:-goclaw-dotdir}:/app/.goclaw
     env_file:
       - path: .env
         required: false
