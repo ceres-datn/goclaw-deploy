@@ -10,7 +10,6 @@
 services:
   goclaw:
     image: ghcr.io/nextlevelbuilder/goclaw:v2.9.1
-    user: "0:0"
     volumes:
       - goclaw-data:/app/data
       - goclaw-workspace:/app/workspace
