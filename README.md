@@ -149,8 +149,16 @@ docker compose down -v  # Remove all volumes
 docker compose up -d    # Fresh start
 ```
 
-### Pull latest image
+### Upgrade to latest version
 ```bash
+./upgrade.sh           # Auto-detect and upgrade to latest
+docker compose pull
+docker compose up -d
+```
+
+### Upgrade to specific version
+```bash
+./upgrade.sh v2.8.4    # Upgrade to v2.8.4
 docker compose pull
 docker compose up -d
 ```
