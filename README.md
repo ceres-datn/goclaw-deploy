@@ -1,6 +1,6 @@
 # GoClaw Deploy
 
-All-in-one Docker deployment for GoClaw — an AI agent gateway platform. This repo packages the upstream `goclaw-core` into a containerized setup with nginx reverse proxy, PostgreSQL database, and pgvector extension.
+Docker Compose configurations for deploying GoClaw — an AI agent gateway platform. Uses pre-built images from GitHub Container Registry (GHCR).
 
 ## What is GoClaw?
 
@@ -25,17 +25,17 @@ Edit `.env` and add:
 
 ### 2. Start the Service
 
-**Production (pre-built image from Docker Hub):**
+**Local Docker (default):**
 ```bash
 docker compose up -d
 ```
 
-**Local build (from source):**
+**VPS/Server:**
 ```bash
-docker compose -f docker-compose-build.yml up -d --build
+docker compose up -d
 ```
 
-**Dokploy deployment (external network):**
+**Dokploy (PaaS platform):**
 ```bash
 docker compose -f docker-compose-dokploy.yml up -d
 ```
@@ -44,86 +44,43 @@ docker compose -f docker-compose-dokploy.yml up -d
 
 Open http://localhost:3000 in your browser.
 
-## Compose Variants
+## Deployment Variants
 
-| Compose File | Use Case | Build | Image Source |
+| Compose File | Use Case | Network | Image Source |
 |---|---|---|---|
-| `docker-compose.yml` | Production | Fast (no build) | Docker Hub (`itsddvn/goclaw`) |
-| `docker-compose-build.yml` | Development | From source | Local Dockerfile |
-| `docker-compose-dokploy.yml` | Dokploy PaaS | Pre-built | Docker Hub (external network) |
+| `docker-compose.yml` | Local Docker / VPS | Default bridge | GHCR (`ghcr.io/nextlevelbuilder/goclaw-web`) |
+| `docker-compose-dokploy.yml` | Dokploy PaaS | External `dokploy-network` | GHCR (with Dokploy proxy) |
 
-All variants use PostgreSQL 18 with pgvector extension for vector storage (internal only, not exposed externally).
+Both variants use:
+- **Pre-built images** from GitHub Container Registry (auto-published by upstream CI/CD)
+- **PostgreSQL 18** with pgvector extension for vector storage
+- **Port 3000** mapped to container port 80
 
 ## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Container (Alpine Linux)                               │
+│  Container: ghcr.io/nextlevelbuilder/goclaw-web         │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │  nginx (port 8080)                              │   │
+│  │  nginx (port 80)                                │   │
 │  │  - Reverse proxy for /v1/ (API)                 │   │
 │  │  - WebSocket proxy for /ws                      │   │
 │  │  - SPA static files (React build)               │   │
 │  └─────────────────────────────────────────────────┘   │
 │  ┌─────────────────────────────────────────────────┐   │
-│  │  GoClaw backend (port 18790)                    │   │
+│  │  GoClaw backend (internal port 18790)           │   │
 │  │  - Go binary with migrations                    │   │
 │  │  - Auto-upgrade on startup (managed mode)       │   │
 │  └─────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────┘
-           ↓ (port 3000 mapped)
+           ↓ (port 3000:80 mapped)
 ┌─────────────────────────────────────────────────────────┐
 │  PostgreSQL 18 + pgvector                               │
 │  - Vector database for embeddings                       │
 │  - User, sessions, config storage                       │
+│  - Internal only (not exposed)                          │
 └─────────────────────────────────────────────────────────┘
 ```
-
-## Deployment Modes
-
-### Production (docker-compose.yml)
-Uses pre-built image from Docker Hub. Fastest startup, no build step required.
-
-```bash
-docker compose up -d
-# Dashboard: http://localhost:3000
-```
-
-### Development (docker-compose-build.yml)
-Builds from source (requires `../goclaw-core` sibling directory). Useful for testing changes.
-
-```bash
-docker compose -f docker-compose-build.yml up -d --build
-# Container rebuilds on every compose up --build
-```
-
-### Dokploy (docker-compose-dokploy.yml)
-Uses external Dokploy network. For PaaS platforms like Dokploy that provide DNS & reverse proxy.
-
-```bash
-docker compose -f docker-compose-dokploy.yml up -d
-# Services connect via dokploy-network
-```
-
-## Release Workflow
-
-Automated release process via `release.sh`:
-
-```bash
-./release.sh sync       # Sync upstream → merge main & develop
-./release.sh publish    # Tag, build, push to Docker Hub, smoke test
-./release.sh full       # sync + publish (default)
-```
-
-Steps:
-1. Fetch from upstream (goclaw-core)
-2. Merge upstream/main → fork/main → fork/develop
-3. Auto-review config diffs (Dockerfile, nginx.conf)
-4. Build & test locally
-5. Tag version from git
-6. Build multi-arch (linux/amd64) and push to Docker Hub
-7. Smoke test with pulled image
-8. Commit compose file updates
 
 ## Environment Variables
 
@@ -166,14 +123,13 @@ POSTGRES_DB=goclaw               # Default
 
 ### Ports
 ```
-GOCLAW_UI_PORT=3000              # External port (maps to 8080 in container)
-GOCLAW_PORT=18790                # Internal backend port (do not change)
+GOCLAW_PORT=3000                 # External port (maps to 80 in container)
 ```
 
 ## Troubleshooting
 
 ### Health check failed
-```
+```bash
 docker compose logs goclaw --tail=50
 ```
 Common causes:
@@ -182,49 +138,37 @@ Common causes:
 - Port conflict: `lsof -i :3000` (check if port 3000 is in use)
 
 ### Containers won't start
-```
+```bash
 docker compose down -v
 docker compose up -d
 ```
 
 ### Database needs reset
-```
+```bash
 docker compose down -v  # Remove all volumes
 docker compose up -d    # Fresh start
 ```
 
-### Build errors
-For local build variant:
+### Pull latest image
 ```bash
-# Ensure goclaw-core exists
-ls -la ../goclaw-core
-
-# Check Docker buildx availability
-docker buildx version
-
-# Rebuild (clears build cache)
-docker compose -f docker-compose-build.yml up -d --build --no-cache
+docker compose pull
+docker compose up -d
 ```
 
-## File Structure
+## Image Versions
 
-| File | Purpose |
-|---|---|
-| `Dockerfile` | 3-stage: Go build → React build → Alpine runtime |
-| `entrypoint.sh` | Container startup: auto-migrate, start goclaw & nginx |
-| `nginx.conf` | Reverse proxy config: /v1/ API, /ws WebSocket, SPA static |
-| `docker-compose.yml` | Production: uses pre-built image |
-| `docker-compose-build.yml` | Development: builds from source |
-| `docker-compose-dokploy.yml` | Dokploy: external network config |
-| `release.sh` | Automated release workflow |
+Images are auto-published by upstream CI/CD:
+- **Latest stable**: `ghcr.io/nextlevelbuilder/goclaw-web:latest`
+- **Specific version**: `ghcr.io/nextlevelbuilder/goclaw-web:v2.4.7`
+
+Check available versions: https://github.com/nextlevelbuilder/goclaw/pkgs/container/goclaw-web
 
 ## Security
 
 - Non-root user (`goclaw`) inside container
-- No new privileges, all capabilities dropped
+- No new privileges, all capabilities dropped except SETUID/SETGID/CHOWN
 - `/tmp` mounted noexec for exploit prevention
 - Resource limits: 1GB RAM, 2 CPU, 200 PIDs
-- Request body limit: 10MB for LLM chat payloads
 - Security headers: X-Content-Type-Options, X-Frame-Options, Referrer-Policy
 - GZIP compression enabled
 - Static asset caching (1 year, immutable)
@@ -233,4 +177,4 @@ docker compose -f docker-compose-build.yml up -d --build --no-cache
 
 For issues with goclaw-core, see https://github.com/nextlevelbuilder/goclaw
 
-For deployment issues, check the docs/ directory for detailed guides.
+For deployment configurations, check this repository's issues.

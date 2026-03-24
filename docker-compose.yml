@@ -9,15 +9,14 @@
 
 services:
   goclaw:
-    image: itsddvn/goclaw:v2.4.6
+    image: ghcr.io/nextlevelbuilder/goclaw-web:v2.9.1
     volumes:
       - goclaw-data:/app/data
       - goclaw-workspace:/app/workspace
       - goclaw-skills:/app/skills
-      - goclaw-sessions:/app/sessions
       - goclaw-dotdir:/app/.goclaw
     ports:
-      - "${GOCLAW_PORT:-3000}:8080"
+      - "${GOCLAW_PORT:-3000}:80"
     env_file:
       - path: .env
         required: false
@@ -32,7 +31,10 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
-    read_only: true
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=256m
     deploy:
@@ -78,7 +80,6 @@ volumes:
   goclaw-data:
   goclaw-workspace:
   goclaw-skills:
-  goclaw-sessions:
   goclaw-dotdir:
   pgdata:
   pgadmin-data:
