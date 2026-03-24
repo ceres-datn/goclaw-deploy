@@ -11,8 +11,8 @@ services:
   goclaw:
     image: ghcr.io/nextlevelbuilder/goclaw:v2.9.1
     volumes:
-      - goclaw-data:/app/data
-      - goclaw-workspace:/app/workspace
+      - ${GOCLAW_DATA_VOLUME:-goclaw-data}:/app/data
+      - ${GOCLAW_WORKSPACE_VOLUME:-goclaw-workspace}:/app/workspace
     env_file:
       - path: .env
         required: false
